@@ -26,6 +26,8 @@ from sklearn.decomposition import PCA
 from sklearn import linear_model
 
 from sklearn.cluster import SpectralClustering
+from sklearn.manifold import SpectralEmbedding
+from sklearn.base import clone
 
 # custom but write this out
 from graph_laplacian import GraphLaplacian
@@ -133,7 +135,7 @@ def plot_line(
 
 
     plt.axis('tight')
-    plt.title(f'{file_name[0]}')
+    plt.title(file_name)
     plt.xlabel(labels[0])
     plt.ylabel(labels[1])
 
@@ -402,18 +404,10 @@ def find_PCA_count(
         if test_value >= reference_value:
             return k
 
-    raise Exception(f'exceeded {model.singular_values_.shape[0]} modes,\
-                     check your ratio value {ratio} as the threshold should be met')
-
-
-## in case of: beta_train,_,_,_ = np.linalg.lstsq(a=A_train,b=train_subset.binary_key,rcond=None)
-
-# def mean_square_error(
-#     predictor:np.ndarray,
-#     data:np.ndarray,
-#     output:np.ndarray
-#     )->float:
-#     return 1/output.shape[0] * np.sum((data.dot(predictor) - output)**2)
+    raise Exception(
+        f"""exceeded {model.singular_values_.shape[0]} modes,
+         check your ratio value {ratio} as the threshold should be met"""
+         )
 
 
 def mean_square_error(
@@ -505,8 +499,7 @@ def main(args:argparse.Namespace)->None:
 
     mpl_params()
 
-    # return nested dict inside scalar np ndarray obj
-    # Load and package data into dataclass
+    ## Load Data & make dataclass
     test_labels = np.loadtxt(
         fname=pathlib.Path(args.data).joinpath('MNIST_test_labels.csv'),
         dtype=float,
@@ -547,7 +540,13 @@ def main(args:argparse.Namespace)->None:
     logger.info(f'data loaded test:  {test.x.shape}{test.y.shape}')
 
 
-    # init training model
+    plot_digits(
+        data=train,
+        count=64,
+        file_name='Training Features'
+        )
+
+    ## Principal Component Analysis training model
     pca = PCA(n_components=train.x.shape[1])
     pca.fit(train.x)
 
@@ -557,29 +556,58 @@ def main(args:argparse.Namespace)->None:
         )
 
     plot_digits(
-        data=train,
-        count=64,
-        file_name='Training Features'
-        )
-
-    plot_digits(
         data=principal_components,
         count=16,
         file_name='Principal Components'
         )
 
+    # L2 / Frobenius norm of singular values
+    pca_modes_threshold = {
+        60:find_PCA_count(model=pca,ratio=0.6),
+        80:find_PCA_count(model=pca,ratio=0.8),
+        90:find_PCA_count(model=pca,ratio=0.9)
+        }
 
+    # print('pca_modes_threshold:\n',pca_modes_threshold)
+    [logger.info(f'{key}% of L2 norm with {val} PCA modes') for key,val in pca_modes_threshold.items()]
+
+    ## Binary classifier
+    for digit_pair in ((1,8),(3,8),(2,7),(4,7),):
+        run_binray_pca_classifier(
+            digits = digit_pair,
+            train = train,
+            test = test,
+            pca = pca,
+            logger = logger,
+            components=24,
+            )
+
+
+    ## Spectral Clustering Graph Laplacian training model
     graph_laplacian = SpectralClustering(
         n_clusters=10,
-        n_components=24,
+        n_components=10,
         affinity='rbf',
         n_jobs=-1,
         assign_labels='cluster_qr'
         )
 
     graph_laplacian.fit(train.x)
+    # reassign true labels
+    for label in np.unique(train.y):
+        indx = train.y==label
+        graph_laplacian.labels_[indx] = label
 
-    print(graph_laplacian.labels_)
+    graph_laplacian_classifier = SpectralEmbedding(
+        n_components=graph_laplacian.n_components,
+        affinity=graph_laplacian.affinity,
+        n_jobs=-1,
+        )
+    graph_laplacian_classifier.fit(train.x)
+
+
+    print(graph_laplacian.labels_[:100])
+    print(train.y[:100])
 
     IPython.embed()
 
@@ -589,7 +617,6 @@ def main(args:argparse.Namespace)->None:
         file_name='Singular Values',
         labels = ('index','log(Singular Values)')
         )
-
 
     plot_line(
         data = 100 * pca.explained_variance_ratio_.cumsum(),
@@ -603,17 +630,6 @@ def main(args:argparse.Namespace)->None:
         labels = ('index','Cumulative Sum')
         )
 
-    print('loaded principal components for training')
-
-    scale_factor = 0.105
-
-    laplacian = GraphLaplacian(
-        data=train.x,
-        distance_ratio=scale_factor
-        )
-
-    # indx = (laplacian.eigval<=5e-20)
-    # print(f'{np.sum(indx)} distict groups given {scale_factor} relative distance')
 
 
     train.binary_key = np.zeros([train.y.shape[0],10],dtype=int)
@@ -622,33 +638,116 @@ def main(args:argparse.Namespace)->None:
     for indx in np.arange(train.y.size):
         train.binary_key[indx,train.y[indx]-1] = 1
 
-    # +1 / -1 one-hot instead of 1 / 0, this keeps symmetric about origin
-    train.binary_key = train.binary_key*2 - 1
+
+    #sample_size = -1
+    #eigen_depth = -1
+    #[:sample_size,:eigen_depth]
+
+    # [0 1]*2 - 1 --> +1 / -1 one-hot instead of 1 / 0, this keeps symmetric about origin
+
+    trained_predictor_matrix = np.linalg.lstsq(
+        a=graph_laplacian_classifier.embedding_,
+        b=(train.binary_key*2 - 1),
+        rcond=None
+        )[0]
+
+    regression_predictor = graph_laplacian_classifier.embedding_.dot(trained_predictor_matrix)
+
+    regression_classifier = np.zeros(regression_predictor.shape)
+
+    for indx,row in enumerate(regression_predictor):
+        indy = np.argmax(row)
+        regression_classifier[indx,indy] = 1
+
+    reconstructed_train_labels = (1 + regression_classifier.dot(np.arange(0,10))).astype(int)
+
+    ## Evaluate test data all obj with test_ prefix
+
+    test_graph_laplacian_classifier = clone(graph_laplacian_classifier)
+
+    test_graph_laplacian_classifier.fit(test.x)
+
+    test_regression_predictor = test_graph_laplacian_classifier.embedding_.dot(trained_predictor_matrix)
+
+    test_regression_classifier = np.zeros(test_regression_predictor.shape)
+
+    for indx,row in enumerate(test_regression_predictor):
+        indy = np.argmax(row)
+        test_regression_classifier[indx,indy] = 1
+
+    reconstructed_test_labels = (1 + test_regression_classifier.dot(np.arange(0,10))).astype(int)
+
+    ## evaluate error / accuracy rate
+    graph_laplacian_error = {
+        'train':[0,1],
+        'test': [0,1]
+        }
+
+    graph_laplacian_error['train'][0] = np.sum((reconstructed_train_labels!=train.y))
+
+    graph_laplacian_error['train'][1] = graph_laplacian_error['train'][0] / train.y.size
+
+    graph_laplacian_error['test'][0] = np.sum((reconstructed_test_labels!=test.y))
+
+    graph_laplacian_error['test'][1] = graph_laplacian_error['test'][0] / test.y.size
+
+    logger.info(f"train:{100*graph_laplacian_error['train'][1]}% across {train.y.size} samples")
+
+    logger.info(f"test:{100*graph_laplacian_error['test'][1]}% across {test.y.size} samples")
+
+    indx = (train.y!=3)&(train.y!=8)&(train.y!=9)
+    indy = (test.y!=3)&(test.y!=8)&(test.y!=9)
+
+    graph_laplacian_error_exclusion = {
+        'train':[0,1],
+        'test': [0,1]
+        }
+
+    graph_laplacian_error_exclusion['train'][0] = np.sum((reconstructed_train_labels[indx]!=train.y[indx]))
+
+    graph_laplacian_error_exclusion['train'][1] = graph_laplacian_error['train'][0] / train.y[indx].size
+
+    graph_laplacian_error_exclusion['test'][0] = np.sum((reconstructed_test_labels[indy]!=test.y[indy]))
+
+    graph_laplacian_error_exclusion['test'][1] = graph_laplacian_error['test'][0] / test.y[indy].size
+
+    logger.info(f"train:{100*graph_laplacian_error_exclusion['train'][1]}% across {train.y[indx].size} samples")
+
+    logger.info(f"test:{100*graph_laplacian_error_exclusion['test'][1]}% across {test.y[indy].size} samples")
 
 
-    eigval_plot(
-        data = np.log(laplacian.eigval[1:]),
-        file_name = 'Graph Laplacian Eigenvalues',
-        labels = ('$Index_j$',r'$log(\lambda_j)$'),
-        marker ='b.',
-        arbitrary_sigma = laplacian.length_scale
-        )
 
+    ## Nix this hand made graph laplacian, but was used for some plots
 
-    eigval_plot(
-        data = np.log(laplacian.eigval_norm[1:]),
-        file_name = 'Graph Laplacian Eigenvalues Normalized',
-        labels= ('$Index_j$',r'$log(\lambda_j)$'),
-        marker='b.',
-        arbitrary_sigma = laplacian.length_scale
-        )
+    # scale_factor = 0.105
+    # laplacian = GraphLaplacian(
+    #     data=train.x,
+    #     distance_ratio=scale_factor
+    #     )
+    # indx = (laplacian.eigval<=5e-20)
+    # print(f'{np.sum(indx)} distict groups given {scale_factor} relative distance')
 
+    # eigval_plot(
+    #     data = np.log(laplacian.eigval[1:]),
+    #     file_name = 'Graph Laplacian Eigenvalues',
+    #     labels = ('$Index_j$',r'$log(\lambda_j)$'),
+    #     marker ='b.',
+    #     arbitrary_sigma = laplacian.length_scale
+    #     )
 
-    eigvec_plot(
-        graph=laplacian,
-        file_name = 'Graph Laplacian Eigenvectors',
-        depth=4,
-        )
+    # eigval_plot(
+    #     data = np.log(laplacian.eigval_norm[1:]),
+    #     file_name = 'Graph Laplacian Eigenvalues Normalized',
+    #     labels= ('$Index_j$',r'$log(\lambda_j)$'),
+    #     marker='b.',
+    #     arbitrary_sigma = laplacian.length_scale
+    #     )
+
+    # eigvec_plot(
+    #     graph=laplacian,
+    #     file_name = 'Graph Laplacian Eigenvectors',
+    #     depth=4,
+    #     )
 
     # eigvec_3d_plot(
     #     graph=laplacian,
@@ -656,46 +755,20 @@ def main(args:argparse.Namespace)->None:
     #     depth=2,
     #     )
 
+    # eigval_plot(
+    #     data = 1000*np.diff(laplacian.eigval)[:8],
+    #     file_name = 'Change in Eigenvalues',
+    #     labels = ('$Index_m$',r'$\Delta\lambda$'),
+    #     marker='k-',
+    #     arbitrary_sigma = laplacian.length_scale
+    #     )
 
-    eigval_plot(
-        data = 1000*np.diff(laplacian.eigval)[:8],
-        file_name = 'Change in Eigenvalues',
-        labels = ('$Index_m$',r'$\Delta\lambda$'),
-        marker='k-',
-        arbitrary_sigma = laplacian.length_scale
-        )
 
+    ## PCA % ANOVA
+    ## Explained variance approach - don't use lol
+    # thresholds = (0.6, 0.8, 0.9)
+    # [logger.info(f'{100*t}% index: {np.argmax(pca.explained_variance_ratio_.cumsum() >= t)}') for t in thresholds]
 
-    print('calc graph laplacian')
-    # IPython.embed()
-
-    # estimate 
-    thresholds = (0.6, 0.8, 0.9)
-
-    # Explained variance approach - don't use lol
-
-    [logger.info(f'{100*t}% index: {np.argmax(pca.explained_variance_ratio_.cumsum() >= t)}') for t in thresholds]
-
-    # L2 / Frobenius norm of singular values
-    pca_modes_threshold = {
-        60:find_PCA_count(model=pca,ratio=0.6),
-        80:find_PCA_count(model=pca,ratio=0.8),
-        90:find_PCA_count(model=pca,ratio=0.9)
-        }
-
-    # print('pca_modes_threshold:\n',pca_modes_threshold)
-    [logger.info(f'{key}% of L2 norm with {val} PCA modes') for key,val in pca_modes_threshold.items()]
-    
-
-    for digit_pair in ((1,8),(3,8),(2,7),(4,7),):
-        run_binray_pca_classifier(
-            digits = digit_pair,
-            train = train,
-            test = test,
-            pca = pca,
-            logger = logger,
-            components=24,
-            )
 
 
 
