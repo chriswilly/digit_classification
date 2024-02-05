@@ -695,6 +695,10 @@ def main(args:argparse.Namespace)->None:
 
     logger.info(f"test:{100*graph_laplacian_error['test'][1]}% across {test.y.size} samples")
 
+
+
+
+    ### Exclude similar digits
     indx = (train.y!=3)&(train.y!=8)&(train.y!=9)
     indy = (test.y!=3)&(test.y!=8)&(test.y!=9)
 
