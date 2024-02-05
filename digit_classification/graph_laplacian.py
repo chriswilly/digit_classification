@@ -96,6 +96,91 @@ class GraphLaplacian:
         self.eigvec_norm = eigvec_norm_unsorted[:,indy]
 
 
+###############################################################################
+
+def spectral_clustering(
+    graph_laplacian:GraphLaplacian
+    )->dict:
+    """ note,
+    """
+
+    fiedler_vector = graph_laplacian.eigvec[:,1]
+
+    # note unsupervised learning sign assigned +/- randomly ...
+    spectral_clustering_classifier = np.sign(fiedler_vector)
+
+    misclassified_count, spectral_clustering_accuracy = evaluate_classification(
+        classifier = spectral_clustering_classifier,
+        data = graph_laplacian.data
+        )
+
+    indx = np.argmin(misclassified_count)  # {0,1}
+
+    return {
+        'laplacian':graph_laplacian,
+        'fiedler':fiedler_vector * (-1)**indx,
+        'classifier':spectral_clustering_classifier * (-1)**indx,
+        'accuracy':spectral_clustering_accuracy[indx],
+        'misclassified':misclassified_count[indx]
+        }
+
+
+
+def semisupervised_learning(
+    graph_laplacian:GraphLaplacian,
+    sample_size:int, # rows
+    eigen_depth:int  # cols
+    )->dict:
+    """
+    """
+    laplacian_embedding = graph_laplacian.eigvec[:sample_size,:eigen_depth]
+    sample_set = graph_laplacian.data[:sample_size]
+
+    model = np.linalg.lstsq(
+        a = laplacian_embedding,
+        b = sample_set,
+        rcond = None
+        )[0]
+
+    regression_predictor = graph_laplacian.eigvec[:,:eigen_depth].dot(model)
+    ## predictor row wise max all else -1
+    regression_classifier = np.sign(regression_predictor)
+
+    misclassified_count, regression_accuracy = evaluate_classification(
+        classifier = regression_classifier,
+        data = graph_laplacian.data
+        )
+
+    indx = np.argmin(misclassified_count)  # {0,1}
+
+    return {
+        'linear_model':model,
+        'predictor':regression_predictor,
+        'classifier':regression_classifier * (-1)**indx,
+        'accuracy':regression_accuracy[indx],
+        'misclassified':misclassified_count[indx]
+        }
+
+
+def evaluate_classification(
+    classifier:np.ndarray,
+    data:np.ndarray
+    )->tuple:
+    """
+    """
+    misclassified = -1*np.ones(2)
+    accuracy = -1*np.ones(2)
+
+    # -1**0 = 1, index 0 -> sign of +1 corresponding to inequality for misclassification
+    misclassified[0] = np.not_equal(data, classifier).sum()
+    misclassified[1] = np.equal(data, classifier).sum()
+    accuracy[0] = 1 - 1/data.size * misclassified[0]
+    accuracy[1] = 1 - 1/data.size * misclassified[1]
+
+    return misclassified, accuracy
+
+
+
 # def test():
 #     """
 #     """

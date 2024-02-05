@@ -5,7 +5,7 @@ January 29, 2022 update February 2, 2024
 """
 import argparse
 import logging
-import datetime
+from datetime import datetime
 import pathlib
 import numpy as np
 
@@ -16,7 +16,6 @@ from dataclasses import (
     field
     )
 
-import scipy.spatial
 import itertools
 
 import matplotlib as mpl
@@ -26,7 +25,7 @@ from cycler import cycler
 from sklearn.decomposition import PCA
 from sklearn import linear_model
 
-from sklearn.manifold import SpectralEmbedding
+from sklearn.cluster import SpectralClustering
 
 # custom but write this out
 from graph_laplacian import GraphLaplacian
@@ -67,7 +66,7 @@ def start_log(
         )
 
     logger = logging.getLogger(caller)
-    handler = logging.StreamHandler(sys.stdout)
+    handler = logging.StreamHandler(stdout)
     logging_formatter = logging.Formatter(r'%(asctime)s:%(name)s:%(message)s')
     handler.setFormatter(logging_formatter)
     logger.addHandler(handler)
@@ -117,11 +116,10 @@ def plot_line(
     """
 
     output = (
-        pathlib.Path(kwargs.get('plot','plots'))
+        pathlib.Path('../plots')
         .joinpath(file_name).with_suffix(ext)
         )
 
-    output = pathlib.Path('plots').joinpath(f'{file_name[0]}.{file_name[-1]}')
     output.resolve().parent.mkdir(exist_ok=True)
 
     fig = plt.figure(figsize=(13.5,12))
@@ -165,12 +163,12 @@ def plot_digits(
 
     if not title:
         try:
-            title = f'First {count} {data.category.title()}ing Features'
+            title = f'First {count} {data.category.title()} Features'
         except:
             title = f'First {count} Features'
 
     output = (
-        pathlib.Path(kwargs.get('plot','plots'))
+        pathlib.Path('../plots')
         .joinpath(file_name).with_suffix(ext)
         )
 
@@ -192,9 +190,10 @@ def plot_digits(
 
     for k in range(count):
         indx = np.unravel_index(k, (side_count,side_count))
-        ax[indx].imshow((data.x[k,:]
-                        .reshape((pixel_length, pixel_length))),
-                         cmap='Greys')
+        ax[indx].imshow(
+            (data.x[k,:].reshape((pixel_length, pixel_length))),
+            cmap='Greys'
+            )
         ax[indx].axis('off')
 
     fig.suptitle(title)
@@ -215,7 +214,7 @@ def eigval_plot(
     """
 
     output = (
-        pathlib.Path(kwargs.get('plot','plots'))
+        pathlib.Path('../plots')
         .joinpath(file_name).with_suffix(ext)
         )
 
@@ -323,7 +322,7 @@ def eigvec_plot(
     """
     """
     output = (
-        pathlib.Path(kwargs.get('plot','plots'))
+        pathlib.Path('../plots')
         .joinpath(file_name)
         )
 
@@ -376,7 +375,7 @@ def eigvec_plot(
         ax.yaxis.set_major_locator(mpl.ticker.MultipleLocator(base=(limits[3]-limits[2])/4))
 
         output = (
-            pathlib.Path(kwargs.get('plot','plots'))
+            pathlib.Path('../plots')
             .joinpath(f'{file_name}/{file_name}_{indx}')
             .with_suffix(ext)
             )
@@ -426,86 +425,73 @@ def mean_square_error(
     return 1/true_data.shape[0] * np.sum((prediction - true_data)**2)
 
 
-def spectral_clustering(
-    graph_laplacian:GraphLaplacian
-    )->dict:
-    """ note,
+def run_binray_pca_classifier(
+    digits:tuple,
+    train:ImageData,
+    test:ImageData,
+    pca:PCA,
+    logger:logging.Logger,
+    components:int=16,
+    )->...:
     """
+    """
+    assert len(digits) == 2
+    a,b = digits
 
-    fiedler_vector = graph_laplacian.eigvec[:,1]
+    indx = (train.y==a)|(train.y==b)
 
-    # note unsupervised learning sign assigned +/- randomly ...
-    spectral_clustering_classifier = np.sign(fiedler_vector)
-
-    misclassified_count, spectral_clustering_accuracy = evaluate_classification(
-        classifier = spectral_clustering_classifier,
-        data = graph_laplacian.data
+    train_subset = ImageData(
+        category = f'{a},{b} training subset',
+        x = train.x[indx],
+        y = train.y[indx]
         )
 
-    indx = np.argmin(misclassified_count)  # {0,1}
+    train_subset.binary_key = np.zeros(train_subset.y.shape)
+    train_subset.binary_key[train_subset.y==a] = -1
+    train_subset.binary_key[train_subset.y==b] =  1
 
-    return {
-        'laplacian':graph_laplacian,
-        'fiedler':fiedler_vector * (-1)**indx,
-        'classifier':spectral_clustering_classifier * (-1)**indx,
-        'accuracy':spectral_clustering_accuracy[indx],
-        'misclassified':misclassified_count[indx]
-        }
+    A_train = train_subset.x.dot(pca.components_[:components].transpose())
 
-
-
-def semisupervised_learning(
-    graph_laplacian:GraphLaplacian,
-    sample_size:int, # rows
-    eigen_depth:int  # cols
-    )->dict:
-    """
-    """
-    laplacian_embedding = graph_laplacian.eigvec[:sample_size,:eigen_depth]
-    sample_set = graph_laplacian.data[:sample_size]
-
-    model = np.linalg.lstsq(
-        a = laplacian_embedding,
-        b = sample_set,
-        rcond = None
-        )[0]
-
-    regression_predictor = graph_laplacian.eigvec[:,:eigen_depth].dot(model)
-    ## predictor row wise max all else -1
-    regression_classifier = np.sign(regression_predictor)
-
-    misclassified_count, regression_accuracy = evaluate_classification(
-        classifier = regression_classifier,
-        data = graph_laplacian.data
+    ridge_regression = (
+        linear_model
+        .RidgeCV()
+        .fit(X=A_train,y=train_subset.binary_key)
         )
 
-    indx = np.argmin(misclassified_count)  # {0,1}
+    train_mean_square_error = mean_square_error(
+        prediction = ridge_regression.predict(A_train),
+        true_data = train_subset.binary_key
+        )
 
-    return {
-        'linear_model':model,
-        'predictor':regression_predictor,
-        'classifier':regression_classifier * (-1)**indx,
-        'accuracy':regression_accuracy[indx],
-        'misclassified':misclassified_count[indx]
-        }
+    logger.info(f'\nalpha value:{np.round(ridge_regression.alpha_,3)}')
+
+    logger.info(f'{a},{b} train Mean Square Error:{np.round(train_mean_square_error,4)}')
 
 
-def evaluate_classification(
-    classifier:np.ndarray,
-    data:np.ndarray
-    )->tuple:
-    """
-    """
-    misclassified = -1*np.ones(2)
-    accuracy = -1*np.ones(2)
+    indx = (test.y==a)|(test.y==b)
 
-    # -1**0 = 1, index 0 -> sign of +1 corresponding to inequality for misclassification
-    misclassified[0] = np.not_equal(data, classifier).sum()
-    misclassified[1] = np.equal(data, classifier).sum()
-    accuracy[0] = 1 - 1/data.size * misclassified[0]
-    accuracy[1] = 1 - 1/data.size * misclassified[1]
+    test_subset = ImageData(
+        category = f'{a},{b} testing subset',
+        x = test.x[indx],
+        y = test.y[indx]
+        )
 
-    return misclassified, accuracy
+    test_subset.binary_key = np.zeros(test_subset.y.shape)
+
+    test_subset.binary_key[test_subset.y==a] = -1
+    test_subset.binary_key[test_subset.y==b] =  1
+
+    A_test = test_subset.x.dot(pca.components_[:components].transpose())
+
+
+    test_mean_square_error = mean_square_error(
+        prediction = ridge_regression.predict(A_test),
+        true_data = test_subset.binary_key
+        )
+
+    logger.info(f'{a},{b} test Mean Square Error:{np.round(test_mean_square_error,4)}')
+
+
 
 
 def main(args:argparse.Namespace)->None:
@@ -523,19 +509,26 @@ def main(args:argparse.Namespace)->None:
     # Load and package data into dataclass
     test_labels = np.loadtxt(
         fname=pathlib.Path(args.data).joinpath('MNIST_test_labels.csv'),
-        dtype=int
-        )
+        dtype=float,
+        delimiter=','
+        ).astype(int)
+
     tain_labels = np.loadtxt(
         fname=pathlib.Path(args.data).joinpath('MNIST_training_labels.csv'),
-        dtype=int
-        )
+        dtype=float,
+        delimiter=','
+        ).astype(int)
+
     test_features = np.loadtxt(
         fname=pathlib.Path(args.data).joinpath('MNIST_test_features.csv'),
-        dtype=float
+        dtype=float,
+        delimiter=','
         )
+
     train_features = np.loadtxt(
         fname=pathlib.Path(args.data).joinpath('MNIST_training_features.csv'),
-        dtype=float
+        dtype=float,
+        delimiter=','
         )
 
     train = ImageData(
@@ -575,6 +568,21 @@ def main(args:argparse.Namespace)->None:
         file_name='Principal Components'
         )
 
+
+    graph_laplacian = SpectralClustering(
+        n_clusters=10,
+        n_components=24,
+        affinity='rbf',
+        n_jobs=-1,
+        assign_labels='cluster_qr'
+        )
+
+    graph_laplacian.fit(train.x)
+
+    print(graph_laplacian.labels_)
+
+    IPython.embed()
+
     # inspect singular values
     plot_line(
         data = np.log(pca.singular_values_),
@@ -597,19 +605,16 @@ def main(args:argparse.Namespace)->None:
 
     print('loaded principal components for training')
 
-    scale_factor = 0.05
+    scale_factor = 0.105
 
     laplacian = GraphLaplacian(
         data=train.x,
         distance_ratio=scale_factor
         )
 
-    indx = (laplacian.eigval<=5e-20)
-    print(f'{np.sum(indx)} distict groups given {scale_factor} relative distance')
+    # indx = (laplacian.eigval<=5e-20)
+    # print(f'{np.sum(indx)} distict groups given {scale_factor} relative distance')
 
-
-    ## checkpoint
-    # IPython.embed()
 
     train.binary_key = np.zeros([train.y.shape[0],10],dtype=int)
 
@@ -645,11 +650,11 @@ def main(args:argparse.Namespace)->None:
         depth=4,
         )
 
-    eigvec_3d_plot(
-        graph=laplacian,
-        file_name = 'Graph Laplacian Eigenvectors',
-        depth=2,
-        )
+    # eigvec_3d_plot(
+    #     graph=laplacian,
+    #     file_name = 'Graph Laplacian Eigenvectors',
+    #     depth=2,
+    #     )
 
 
     eigval_plot(
@@ -662,7 +667,7 @@ def main(args:argparse.Namespace)->None:
 
 
     print('calc graph laplacian')
-    IPython.embed()
+    # IPython.embed()
 
     # estimate 
     thresholds = (0.6, 0.8, 0.9)
@@ -682,176 +687,15 @@ def main(args:argparse.Namespace)->None:
     [logger.info(f'{key}% of L2 norm with {val} PCA modes') for key,val in pca_modes_threshold.items()]
     
 
-    # part 3: 1|8
-    indx = (train.y==1)|(train.y==8)
-
-    train_subset = ImageData(
-        category = '1,8 training subset',
-        x = train.x[indx],
-        y = train.y[indx]
-        )
-
-    train_subset.binary_key = np.zeros(train_subset.y.shape)
-    train_subset.binary_key[train_subset.y==1] = -1
-    train_subset.binary_key[train_subset.y==8] =  1
-
-    # project X_1,8 onto first 16 PCA modes by dot product, 
-    # PCA(n=16) is same as pca.components_[:16] so keep same model and just do the linalgebra if project -> dot project
-
-    A_train = train_subset.x.dot(pca.components_[:16].transpose())
-    # 455,256 * 256,16  -> 455 row 16 col
-
-    ridge_regression = (
-        linear_model
-        .RidgeCV()
-        .fit(X=A_train,y=train_subset.binary_key)
-        )
-
-    train_mean_square_error = mean_square_error(
-        prediction = ridge_regression.predict(A_train),
-        true_data = train_subset.binary_key
-        )
-
-    logger.info(f'\nalpha value:{np.round(ridge_regression.alpha_,3)}')
-    logger.info(f'1,8 train Mean Square Error:{np.round(train_mean_square_error,4)}')
-    
-
-    indx = (test.y==1)|(test.y==8)
-
-    test_subset = ImageData(
-        category = '1,8 testing subset',
-        x = test.x[indx],
-        y = test.y[indx]
-        )
-
-    test_subset.binary_key = np.zeros(test_subset.y.shape)
-    test_subset.binary_key[test_subset.y==1] = -1
-    test_subset.binary_key[test_subset.y==8] =  1
-
-    A_test = test_subset.x.dot(pca.components_[:16].transpose())  
-
-
-    test_mean_square_error = mean_square_error(
-        prediction = ridge_regression.predict(A_test),
-        true_data = test_subset.binary_key
-        )
-
-    logger.info(f'1,8 test Mean Square Error:{np.round(test_mean_square_error,4)}')
-    ###
-
-
-    # part 4: 3 | 8
-    indx = (train.y==3)|(train.y==8)
-
-    train_subset = ImageData(
-        category = '3,8 training subset',
-        x = train.x[indx],
-        y = train.y[indx]
-        )
-
-    train_subset.binary_key = np.zeros(train_subset.y.shape)
-    train_subset.binary_key[train_subset.y==3] = -1
-    train_subset.binary_key[train_subset.y==8] =  1
-
-    A_train = train_subset.x.dot(pca.components_[:16].transpose())  
-
-    ridge_regression = (
-        linear_model
-        .RidgeCV()
-        .fit(X=A_train,y=train_subset.binary_key)
-        )
-
-    train_mean_square_error = mean_square_error(
-        prediction = ridge_regression.predict(A_train),
-        true_data = train_subset.binary_key
-        )
-
-    logger.info(f'\nalpha value:{np.round(ridge_regression.alpha_,3)}')
-    logger.info(f'3,8 train Mean Square Error:{np.round(train_mean_square_error,4)}')
-    
-
-    indx = (test.y==3)|(test.y==8)
-
-    test_subset = ImageData(
-        category = '3,8 testing subset',
-        x = test.x[indx],
-        y = test.y[indx]
-        )
-
-    test_subset.binary_key = np.zeros(test_subset.y.shape)
-    test_subset.binary_key[test_subset.y==3] = -1
-    test_subset.binary_key[test_subset.y==8] =  1
-
-    A_test = test_subset.x.dot(pca.components_[:16].transpose())  
-
-
-    test_mean_square_error = mean_square_error(
-        prediction = ridge_regression.predict(A_test),
-        true_data = test_subset.binary_key
-        )
-
-
-    logger.info(f'3,8 test Mean Square Error:{np.round(test_mean_square_error,4)}')
-
-    ### 2 | 7
-
-    indx = (train.y==2)|(train.y==7)
-
-    train_subset = ImageData(
-        category = '2,7 training subset',
-        x = train.x[indx],
-        y = train.y[indx]
-        )
-
-    train_subset.binary_key = np.zeros(train_subset.y.shape)
-    train_subset.binary_key[train_subset.y==2] = -1
-    train_subset.binary_key[train_subset.y==7] =  1
-
-    A_train = train_subset.x.dot(pca.components_[:16].transpose())  
-
-    ridge_regression = (
-        linear_model
-        .RidgeCV()
-        .fit(X=A_train,y=train_subset.binary_key)
-        )
-
-    train_mean_square_error = mean_square_error(
-        prediction = ridge_regression.predict(A_train),
-        true_data = train_subset.binary_key
-        )
-
-    logger.info(f'\nalpha value:{np.round(ridge_regression.alpha_,3)}')
-
-    logger.info(f'2,7 train Mean Square Error:{np.round(train_mean_square_error,4)}')
-    
-
-    indx = (test.y==2)|(test.y==7)
-
-    test_subset = ImageData(
-        category = '2,7 testing subset',
-        x = test.x[indx],
-        y = test.y[indx]
-        )
-
-    test_subset.binary_key = np.zeros(test_subset.y.shape)
-
-    test_subset.binary_key[test_subset.y==2] = -1
-    test_subset.binary_key[test_subset.y==7] =  1
-
-    A_test = test_subset.x.dot(pca.components_[:16].transpose())  
-
-
-    test_mean_square_error = mean_square_error(
-        prediction = ridge_regression.predict(A_test),
-        true_data = test_subset.binary_key
-        )
-
-    logger.info(f'2,7 test Mean Square Error:{np.round(test_mean_square_error,4)}')
-    ###
-
-
-
-
+    for digit_pair in ((1,8),(3,8),(2,7),(4,7),):
+        run_binray_pca_classifier(
+            digits = digit_pair,
+            train = train,
+            test = test,
+            pca = pca,
+            logger = logger,
+            components=24,
+            )
 
 
 
@@ -867,18 +711,18 @@ if __name__=='__main__':
         )
 
     parser.add_argument(
-        '--plot', metavar='output plot directory path',
-        type=str, nargs='?',
-        help='output file dir',
-        default='../plots'
-        )
-
-    parser.add_argument(
         '--log', metavar='log file destination path',
         type=str, nargs='?',
         help='log dir',
         default='../logs'
         )
+
+    # parser.add_argument(
+    #     '--plot', metavar='output plot directory path',
+    #     type=str, nargs='?',
+    #     help='output file dir',
+    #     default='../plots'
+    #     )
 
     args = parser.parse_args()
 
