@@ -3,7 +3,7 @@ Michael Willy
 AMATH582 Homework 2 + 4 combined digit classifier
 January 29, 2022 update February 2, 2024
 """
-
+import argparse
 import logging
 import datetime
 import pathlib
@@ -21,32 +21,55 @@ import itertools
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+from cycler import cycler
 
 from sklearn.decomposition import PCA
 from sklearn import linear_model
 
+from sklearn.manifold import SpectralEmbedding
+
+# custom but write this out
 from graph_laplacian import GraphLaplacian
 
 import IPython
-np.set_printoptions(precision=2, threshold=7)
+np.set_printoptions(precision=2, threshold=27)
 
 
 
-def start_log()->pathlib.Path:
+def start_log(
+    name:str,
+    destination:str|pathlib.Path,
+    caller:str = __name__,
+    ext:str = '.log',
+    level:object = logging.INFO
+    )->tuple[logging.Logger,pathlib.Path]:
     """
+    create log directory, return logger obj and path
     """
-    timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-    file = pathlib.Path(__file__).resolve()
-    log_name = f'./logs/{file.parent.name}_{file.stem}_{timestamp}.log'
-    log_file = pathlib.Path(log_name).resolve()
+    timestamp = datetime.now().strftime(r'%Y%m%d_%H%M%S')
+
+    if isinstance(destination,str):
+        log_name = f'{destination}/{name}_{timestamp}'
+
+    elif isinstance(destination,pathlib.Path):
+        log_name = str(destination/f'{name}_{timestamp}')
+
+    else:
+        raise TypeError(f'{type(destination)=} not supported')
+
+    log_file = pathlib.Path(log_name).with_suffix(ext).resolve()
     log_file.parent.mkdir(parents=True, exist_ok=True)
 
     logging.basicConfig(
-        filename=log_file, 
-        level=logging.INFO
+        filename=log_file,
+        level=level,
+        encoding='utf-16'
         )
-    handler = logging.StreamHandler(stdout)
-    logger = logging.getLogger(__name__)
+
+    logger = logging.getLogger(caller)
+    handler = logging.StreamHandler(sys.stdout)
+    logging_formatter = logging.Formatter(r'%(asctime)s:%(name)s:%(message)s')
+    handler.setFormatter(logging_formatter)
     logger.addHandler(handler)
 
     return logger, log_file
@@ -60,68 +83,44 @@ class ImageData:
     binary_key: np.ndarray = None
 
 
-# @dataclass
-# class Dataset:
-#     """
-#     """
-#     category: str
-#     x: pd.DataFrame
-#     y: pd.Series = None
-
-
-def mpl_params():
-    """matplotlib parameters plot formatting
+def mpl_params()->None:
+    """ matplotlib parameters plot formatting
     """
-    mpl.rcParams['figure.titlesize'] = 42
+    mpl.rcParams['figure.titlesize'] = 32
     mpl.rcParams['figure.titleweight'] = 'demibold'
-    mpl.rcParams['axes.labelsize'] = 48
-    mpl.rcParams['axes.titlesize'] = 40
-    mpl.rcParams['xtick.labelsize'] = 48
-    mpl.rcParams['ytick.labelsize'] = 48
+    mpl.rcParams['axes.labelsize'] = 32
+    mpl.rcParams['axes.titlesize'] = 28
+    mpl.rcParams['xtick.labelsize'] = 32
+    mpl.rcParams['ytick.labelsize'] = 32
     mpl.rcParams['axes.xmargin'] = 0
     mpl.rcParams['axes.ymargin'] = 0
-    mpl.rcParams['lines.linewidth'] = 5
-    mpl.rcParams['lines.markersize'] = 40
-    mpl.rcParams['lines.markeredgewidth'] = 3
+    mpl.rcParams['lines.linewidth'] = 4
+    mpl.rcParams['lines.markersize'] = 16
+    mpl.rcParams['lines.markeredgewidth'] = 2
     mpl.rcParams['legend.framealpha'] = 0.87
     mpl.rcParams['legend.fontsize'] = 36
 
-
-
-def load_data(
-    file:str,
-    unsafe:bool=False
-    )->np.ndarray:
-    """ load numpy array files
-    """
-    file = pathlib.Path(file).resolve()
-
-    # alow pickle
-    if   isinstance(unsafe, bool) and not unsafe:
-        allow_pickle = False
-
-    elif isinstance(unsafe, bool) and unsafe:
-        allow_pickle = True
-
-    else:
-        raise ValueError(f'unsafe:{type(unsafe)}:{unsafe}\n.')
-
-
-    if not file.exists():
-        raise ValueError(f'{file}\nNot located.')
-
-    else:
-        return np.load(file, allow_pickle=allow_pickle)
-
+    cyc_color = cycler(color=['r','b','g','k','c','m','y'])
+    cyc_lines = cycler(linestyle=['-', '--', ':'])
+    cyc_alpha = cycler(alpha=[0.7, 0.35])
+    cycles = (cyc_alpha * cyc_lines * cyc_color)
+    mpl.rcParams['axes.prop_cycle'] = cycles
 
 
 def plot_line(
     data:np.ndarray,  # 1D in singular vals
-    file_name:tuple = ('test','png'),
+    file_name:str,
+    ext:str='.png',
     labels:tuple = ('','')
     )->None:
     """
     """
+
+    output = (
+        pathlib.Path(kwargs.get('plot','plots'))
+        .joinpath(file_name).with_suffix(ext)
+        )
+
     output = pathlib.Path('plots').joinpath(f'{file_name[0]}.{file_name[-1]}')
     output.resolve().parent.mkdir(exist_ok=True)
 
@@ -157,9 +156,10 @@ def plot_line(
 def plot_digits(
     data:ImageData,
     count:int,
+    file_name:str,
     title:str = None,
-    file_name:tuple = (None,'png')
-    ):
+    ext:str='.png'
+    )->None:
     """ Plot NxN digits
     """
 
@@ -169,10 +169,11 @@ def plot_digits(
         except:
             title = f'First {count} Features'
 
-    if not isinstance(file_name,tuple) or not file_name[0]: 
-        file_name = (title,'png')
+    output = (
+        pathlib.Path(kwargs.get('plot','plots'))
+        .joinpath(file_name).with_suffix(ext)
+        )
 
-    output = pathlib.Path('plots').joinpath(f'{file_name[0]}.{file_name[-1]}')
     output.resolve().parent.mkdir(exist_ok=True)
 
     if count > data.x.shape[0]:
@@ -201,6 +202,188 @@ def plot_digits(
     plt.close('all')
 
 
+def eigval_plot(
+    data:np.array,
+    file_name:str,
+    labels:tuple = ('',''),
+    marker:str='.',
+    ext:str='.png',
+    PAPER_SIZE:tuple=(11,9),
+    **kwargs
+    )->None:
+    """
+    """
+
+    output = (
+        pathlib.Path(kwargs.get('plot','plots'))
+        .joinpath(file_name).with_suffix(ext)
+        )
+
+    output.resolve().parent.mkdir(exist_ok=True)
+
+    fig = plt.figure(figsize=PAPER_SIZE)
+    ax = fig.add_subplot(111)
+
+    sigma = kwargs.get('arbitrary_sigma',False)
+
+    if sigma:
+        y_label = fr'$\lambda$ for $\sigma \approx$ {sigma:0.2f}'
+    else:
+        y_label = 'Eigenvalues'
+
+
+    ax.plot(data,marker,label=y_label)
+    padding = 0.
+    limits = [
+        0-padding, data.size,
+        np.floor(np.nanmin(data)-padding),
+        np.ceil(np.nanmax(data)+padding)
+        ]
+
+    plt.axis(limits)
+    plt.title(f'{file_name}')
+    plt.xlabel(labels[0])
+    plt.ylabel(labels[1])
+
+    ax.legend(loc=0)
+
+    # ax.set_yscale('log')
+    ax.xaxis.set_major_formatter(mpl.ticker.StrMethodFormatter('{x:,.0f}'))
+    ax.yaxis.set_major_formatter(mpl.ticker.StrMethodFormatter('{x:,.0f}'))
+    ax.xaxis.set_major_locator(mpl.ticker.MultipleLocator(base=(limits[1]-limits[0])/4))
+    ax.yaxis.set_major_locator(mpl.ticker.MultipleLocator(base=(limits[3]-limits[2])/4))
+
+    plt.grid(visible=True, which='major', axis='both')
+    fig.savefig(output, bbox_inches='tight')
+    plt.close('all')
+
+
+def eigvec_3d_plot(
+    graph:GraphLaplacian,
+    file_name:str,
+    depth:int = 3,
+    labels:tuple = ('',''),
+    marker:str='.',
+    ext:str='.png',
+    PAPER_SIZE:tuple=(9,9),
+    **kwargs
+    )->None:
+    """
+    """
+
+    sigma = kwargs.get('arbitrary_sigma',False)
+
+    for indx in np.arange(1,depth):
+
+        if sigma:
+            y_label = fr'$v$ for $\sigma \approx$ {sigma:0.2f}'
+
+        else:
+            y_label = f'Eigenvectors {indx},{indx+1}'
+
+        fig = plt.figure(figsize=PAPER_SIZE)
+        ax = fig.add_subplot(projection='3d')
+
+        if not bool(np.mod(indx,2)):
+            data_x = graph.eigvec_norm[:,indx+1]
+            data_y = graph.eigvec_norm[:,indx]
+            data_z = graph.eigvec_norm[:,indx+2]
+
+            labels = (f'$v_{indx+1}$',f'$v_{indx}$'f'$v_{indx+2}$')
+        else:
+            data_x = graph.eigvec_norm[:,indx]
+            data_y = graph.eigvec_norm[:,indx+1]
+            data_z = graph.eigvec_norm[:,indx+2]
+
+            labels = (f'$v_{indx}$',f'$v_{indx+1}$',f'$v_{indx+2}$')
+
+        ax.scatter(data_x, data_y, data_z, marker=marker)
+
+        plt.title(f'{file_name}')
+
+        ax.legend(loc=0)
+
+        ax.set_xlabel(labels[0])
+        ax.set_ylabel(labels[1])
+        ax.set_zlabel(labels[2])
+
+        plt.show()
+
+
+def eigvec_plot(
+    graph:GraphLaplacian,
+    file_name:str,
+    depth:int = 3,
+    labels:tuple = ('',''),
+    marker:str='.',
+    ext:str='.png',
+    PAPER_SIZE:tuple=(11,9),
+    **kwargs
+    )->None:
+    """
+    """
+    output = (
+        pathlib.Path(kwargs.get('plot','plots'))
+        .joinpath(file_name)
+        )
+
+    output.resolve().mkdir(parents=True, exist_ok=True)
+
+    sigma = kwargs.get('arbitrary_sigma',False)
+
+
+    for indx in np.arange(1,depth):
+
+        if sigma:
+            y_label = fr'$v$ for $\sigma \approx$ {sigma:0.2f}'
+
+        else:
+            y_label = f'Eigenvectors {indx},{indx+1}'
+
+        fig = plt.figure(figsize=PAPER_SIZE)
+        ax = fig.add_subplot(111)
+
+        if not bool(np.mod(indx,2)):
+            data_x = graph.eigvec_norm[:,indx+1]
+            data_y = graph.eigvec_norm[:,indx]
+            labels = (f'$v_{indx+1}$',f'$v_{indx}$')
+        else:
+            data_x = graph.eigvec_norm[:,indx]
+            data_y = graph.eigvec_norm[:,indx+1]
+            labels = (f'$v_{indx}$',f'$v_{indx+1}$')
+
+
+        ax.plot(data_x,data_y,marker,label=y_label)
+        padding = 0.0
+        limits = [
+            np.floor( data_x.min()-padding ),
+            np.ceil(  data_x.max()+padding ),
+            np.floor( data_y.min()-padding ),
+            np.ceil(  data_y.max()+padding )
+            ]
+
+        plt.axis(limits)
+        plt.title(f'{file_name}')
+        plt.xlabel(labels[0])
+        plt.ylabel(labels[1])
+
+        ax.legend(loc=0)
+
+        # ax.set_yscale('log')
+        ax.xaxis.set_major_formatter(mpl.ticker.StrMethodFormatter('{x:,.1f}'))
+        ax.yaxis.set_major_formatter(mpl.ticker.StrMethodFormatter('{x:,.1f}'))
+        ax.xaxis.set_major_locator(mpl.ticker.MultipleLocator(base=(limits[1]-limits[0])/4))
+        ax.yaxis.set_major_locator(mpl.ticker.MultipleLocator(base=(limits[3]-limits[2])/4))
+
+        output = (
+            pathlib.Path(kwargs.get('plot','plots'))
+            .joinpath(f'{file_name}/{file_name}_{indx}')
+            .with_suffix(ext)
+            )
+
+        plt.grid(visible=True, which='major', axis='both')
+        fig.savefig(output, bbox_inches='tight')
+        plt.close('all')
 
 
 def find_PCA_count(
@@ -243,29 +426,128 @@ def mean_square_error(
     return 1/true_data.shape[0] * np.sum((prediction - true_data)**2)
 
 
+def spectral_clustering(
+    graph_laplacian:GraphLaplacian
+    )->dict:
+    """ note,
+    """
 
-def main():
+    fiedler_vector = graph_laplacian.eigvec[:,1]
+
+    # note unsupervised learning sign assigned +/- randomly ...
+    spectral_clustering_classifier = np.sign(fiedler_vector)
+
+    misclassified_count, spectral_clustering_accuracy = evaluate_classification(
+        classifier = spectral_clustering_classifier,
+        data = graph_laplacian.data
+        )
+
+    indx = np.argmin(misclassified_count)  # {0,1}
+
+    return {
+        'laplacian':graph_laplacian,
+        'fiedler':fiedler_vector * (-1)**indx,
+        'classifier':spectral_clustering_classifier * (-1)**indx,
+        'accuracy':spectral_clustering_accuracy[indx],
+        'misclassified':misclassified_count[indx]
+        }
+
+
+
+def semisupervised_learning(
+    graph_laplacian:GraphLaplacian,
+    sample_size:int, # rows
+    eigen_depth:int  # cols
+    )->dict:
+    """
+    """
+    laplacian_embedding = graph_laplacian.eigvec[:sample_size,:eigen_depth]
+    sample_set = graph_laplacian.data[:sample_size]
+
+    model = np.linalg.lstsq(
+        a = laplacian_embedding,
+        b = sample_set,
+        rcond = None
+        )[0]
+
+    regression_predictor = graph_laplacian.eigvec[:,:eigen_depth].dot(model)
+    ## predictor row wise max all else -1
+    regression_classifier = np.sign(regression_predictor)
+
+    misclassified_count, regression_accuracy = evaluate_classification(
+        classifier = regression_classifier,
+        data = graph_laplacian.data
+        )
+
+    indx = np.argmin(misclassified_count)  # {0,1}
+
+    return {
+        'linear_model':model,
+        'predictor':regression_predictor,
+        'classifier':regression_classifier * (-1)**indx,
+        'accuracy':regression_accuracy[indx],
+        'misclassified':misclassified_count[indx]
+        }
+
+
+def evaluate_classification(
+    classifier:np.ndarray,
+    data:np.ndarray
+    )->tuple:
+    """
+    """
+    misclassified = -1*np.ones(2)
+    accuracy = -1*np.ones(2)
+
+    # -1**0 = 1, index 0 -> sign of +1 corresponding to inequality for misclassification
+    misclassified[0] = np.not_equal(data, classifier).sum()
+    misclassified[1] = np.equal(data, classifier).sum()
+    accuracy[0] = 1 - 1/data.size * misclassified[0]
+    accuracy[1] = 1 - 1/data.size * misclassified[1]
+
+    return misclassified, accuracy
+
+
+def main(args:argparse.Namespace)->None:
     """
     """
 
-    logger,_ = start_log()
+    logger,log_file = start_log(
+        name=f'{pathlib.Path(__file__).stem}',
+        destination=args.log
+        )
+
     mpl_params()
 
     # return nested dict inside scalar np ndarray obj
     # Load and package data into dataclass
-    test_dict  = load_data('../data/MNIST_test_set.npy',unsafe=True)
-    train_dict = load_data('../data/MNIST_training_set.npy',unsafe=True)
-    
+    test_labels = np.loadtxt(
+        fname=pathlib.Path(args.data).joinpath('MNIST_test_labels.csv'),
+        dtype=int
+        )
+    tain_labels = np.loadtxt(
+        fname=pathlib.Path(args.data).joinpath('MNIST_training_labels.csv'),
+        dtype=int
+        )
+    test_features = np.loadtxt(
+        fname=pathlib.Path(args.data).joinpath('MNIST_test_features.csv'),
+        dtype=float
+        )
+    train_features = np.loadtxt(
+        fname=pathlib.Path(args.data).joinpath('MNIST_training_features.csv'),
+        dtype=float
+        )
+
     train = ImageData(
-        category = 'train',
-        x = train_dict.item().get('features'),
-        y = train_dict.item().get('labels')
+        category = 'training digits',
+        x = train_features,
+        y = tain_labels
         )
 
     test  = ImageData(
-        category = 'test',
-        x = test_dict.item().get('features'),
-        y = test_dict.item().get('labels')
+        category = 'test digits',
+        x = test_features,
+        y = test_labels
         )
 
     logger.info(f'data loaded train: {train.x.shape}{train.y.shape}')
@@ -281,58 +563,101 @@ def main():
         x = pca.components_
         )
 
-    plot_digits(data=train,count=64)
+    plot_digits(
+        data=train,
+        count=64,
+        file_name='Training Features'
+        )
 
     plot_digits(
         data=principal_components,
         count=16,
-        file_name=('Principal Components','png')
+        file_name='Principal Components'
         )
 
     # inspect singular values
     plot_line(
         data = np.log(pca.singular_values_),
-        file_name=('Singular Values','png'),
+        file_name='Singular Values',
         labels = ('index','log(Singular Values)')
         )
 
 
     plot_line(
         data = 100 * pca.explained_variance_ratio_.cumsum(),
-        file_name=('Cumulative Explained Variance Ratio','png'),
+        file_name='Cumulative Explained Variance Ratio',
         labels = ('index','Cumulative Sum')
         )
 
     plot_line(
         data = 100 * pca.explained_variance_ratio_.cumsum()[:16],
-        file_name=('Cumulative Explained Variance Ratio Truncated','png'),
+        file_name='Cumulative Explained Variance Ratio Truncated',
         labels = ('index','Cumulative Sum')
         )
 
-
     print('loaded principal components for training')
 
-    scale_factor = 0.1075
+    scale_factor = 0.05
 
     laplacian = GraphLaplacian(
         data=train.x,
         distance_ratio=scale_factor
         )
 
-    indx = (laplacian.eigval<=5e-12)
+    indx = (laplacian.eigval<=5e-20)
     print(f'{np.sum(indx)} distict groups given {scale_factor} relative distance')
 
-    graph_laplacian_model = ImageData(
-        category='graph trained model',
-        x = laplacian.eigvec_norm
+
+    ## checkpoint
+    # IPython.embed()
+
+    train.binary_key = np.zeros([train.y.shape[0],10],dtype=int)
+
+    # lookup how to ravel & put vs this row by row loop
+    for indx in np.arange(train.y.size):
+        train.binary_key[indx,train.y[indx]-1] = 1
+
+    # +1 / -1 one-hot instead of 1 / 0, this keeps symmetric about origin
+    train.binary_key = train.binary_key*2 - 1
+
+
+    eigval_plot(
+        data = np.log(laplacian.eigval[1:]),
+        file_name = 'Graph Laplacian Eigenvalues',
+        labels = ('$Index_j$',r'$log(\lambda_j)$'),
+        marker ='b.',
+        arbitrary_sigma = laplacian.length_scale
         )
 
-    IPython.embed()
 
-    plot_digits(
-        data=graph_laplacian_model,
-        count=16,
-        file_name=('Graph Laplacian Eigenvectors','png')
+    eigval_plot(
+        data = np.log(laplacian.eigval_norm[1:]),
+        file_name = 'Graph Laplacian Eigenvalues Normalized',
+        labels= ('$Index_j$',r'$log(\lambda_j)$'),
+        marker='b.',
+        arbitrary_sigma = laplacian.length_scale
+        )
+
+
+    eigvec_plot(
+        graph=laplacian,
+        file_name = 'Graph Laplacian Eigenvectors',
+        depth=4,
+        )
+
+    eigvec_3d_plot(
+        graph=laplacian,
+        file_name = 'Graph Laplacian Eigenvectors',
+        depth=2,
+        )
+
+
+    eigval_plot(
+        data = 1000*np.diff(laplacian.eigval)[:8],
+        file_name = 'Change in Eigenvalues',
+        labels = ('$Index_m$',r'$\Delta\lambda$'),
+        marker='k-',
+        arbitrary_sigma = laplacian.length_scale
         )
 
 
@@ -373,7 +698,8 @@ def main():
     # project X_1,8 onto first 16 PCA modes by dot product, 
     # PCA(n=16) is same as pca.components_[:16] so keep same model and just do the linalgebra if project -> dot project
 
-    A_train = train_subset.x.dot(pca.components_[:16].transpose())  # 455,256 * 256,16  -> 455 row 16 col
+    A_train = train_subset.x.dot(pca.components_[:16].transpose())
+    # 455,256 * 256,16  -> 455 row 16 col
 
     ridge_regression = (
         linear_model
@@ -530,4 +856,30 @@ def main():
 
 
 if __name__=='__main__':
-    main()
+
+    parser = argparse.ArgumentParser(description='Config Path & Flags')
+
+    parser.add_argument(
+        '--data', metavar='data file souce path',
+        type=str, nargs='?',
+        help='input csv dir',
+        default='../data'
+        )
+
+    parser.add_argument(
+        '--plot', metavar='output plot directory path',
+        type=str, nargs='?',
+        help='output file dir',
+        default='../plots'
+        )
+
+    parser.add_argument(
+        '--log', metavar='log file destination path',
+        type=str, nargs='?',
+        help='log dir',
+        default='../logs'
+        )
+
+    args = parser.parse_args()
+
+    main(args=args)

@@ -17,8 +17,8 @@ np.set_printoptions(precision=1, threshold=80)
 class GraphLaplacian:
     """
     """
-    data: np.ndarray
-    distance_ratio: float
+    data: np.ndarray      = field(init=True, repr=False)
+    distance_ratio: float = field(init=True)
 
     # sigma or radial threshold
     length_scale: float   = field(init=False)
