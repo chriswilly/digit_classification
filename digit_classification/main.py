@@ -93,7 +93,7 @@ def mpl_params()->None:
     mpl.rcParams['figure.titlesize'] = 32
     mpl.rcParams['figure.titleweight'] = 'demibold'
     mpl.rcParams['axes.labelsize'] = 32
-    mpl.rcParams['axes.titlesize'] = 28
+    mpl.rcParams['axes.titlesize'] = 24
     mpl.rcParams['xtick.labelsize'] = 32
     mpl.rcParams['ytick.labelsize'] = 32
     mpl.rcParams['axes.xmargin'] = 0
@@ -414,16 +414,17 @@ def histogram_plot(
 
     for number in digits:
 
-        indx = (data.x == number)&(data.binary_key==True)
-        indy = (data.y == number)&(data.binary_key==True)
+        indx = (data.x == number)&(data.binary_key == True)
+        indy = (data.y == number)&(data.binary_key == True)
 
         # todo find a better enum or switch vs this str key
 
+        # cross compare
         if mode == 'feature':
-            frequency_data = data.x[indx]
+            frequency_data = data.y[indx]
 
         elif mode == 'prediction':
-            frequency_data = data.y[indy]
+            frequency_data = data.x[indy]
 
         else:
             raise Exception(f'{mode} key is not in enum "feature" or "prediction"')
@@ -432,27 +433,41 @@ def histogram_plot(
         fig = plt.figure(figsize=PAPER_SIZE)
         ax = fig.add_subplot(111)
 
-        count,bins = np.histogram(frequency_data, bins = digits.size)
-        bins = bins[1:]
+        count,bins = np.histogram(frequency_data, bins = np.arange(11))
         # func = func/func.sum() # pdf
+        # print(number)
+        # print(bins)
+        # print(count)
+
+        bins = bins[:-1]
 
         ax.bar(
             bins,count,
-            width=0.4,
-            label= list(map(str,digits)),
-            alpha=0.33
+            width = 0.85,
+            label = list(map(str,digits)),
+            alpha = 0.67
             )
 
-        plt.title(f'{file_name}')
+        padding = 0.5
+        limits = [
+            np.floor(digits.min()),
+            np.ceil( digits.max()),
+            0,
+            count.max()+padding
+            ]
+
+        plt.axis(limits)
+
+        plt.title(f'{file_name} {number}')
 
         plt.xlabel(labels[0])
         plt.ylabel(labels[1])
 
-        ax.legend(loc=0)
+        # ax.legend(loc=0)
 
-        ax.xaxis.set_major_formatter(mpl.ticker.StrMethodFormatter('{x:,.1f}'))
-        ax.yaxis.set_major_formatter(mpl.ticker.StrMethodFormatter('{x:,.1f}'))
-        ax.xaxis.set_major_locator(mpl.ticker.MultipleLocator(base=(limits[1]-limits[0])/4))
+        ax.xaxis.set_major_formatter(mpl.ticker.StrMethodFormatter('{x:,.0f}'))
+        ax.yaxis.set_major_formatter(mpl.ticker.StrMethodFormatter('{x:,.0f}'))
+        ax.xaxis.set_major_locator(mpl.ticker.MultipleLocator(base=1))
         ax.yaxis.set_major_locator(mpl.ticker.MultipleLocator(base=(limits[3]-limits[2])/4))
 
         output = (
@@ -682,6 +697,7 @@ def main(args:argparse.Namespace)->None:
         indx = train.y==label
         graph_laplacian.labels_[indx] = label
 
+
     graph_laplacian_classifier = SpectralEmbedding(
         n_components = graph_laplacian.n_components,
         affinity = graph_laplacian.affinity,
@@ -695,7 +711,7 @@ def main(args:argparse.Namespace)->None:
     print(graph_laplacian.labels_[:100])
     print(train.y[:100])
 
-    IPython.embed()
+    # IPython.embed()
 
     # inspect singular values
     plot_line(
@@ -780,27 +796,12 @@ def main(args:argparse.Namespace)->None:
         binary_key = mislabeled_train
         )
 
-    classification_error_test = ImageData(
-        category = 'test label error',
-        x = test.y,
-        y = reconstructed_test_labels,
-        binary_key = mislabeled_test
-        )
-
-    histogram_plot(
-        data = classification_train_error,
-        file_name = 'Classification Error in Training on Features',
-        mode = 'feature',
-        labels = ('Feature Digits','Mislabeled Count')
-        )
-
-
-    histogram_plot(
-        data = classification_train_error,
-        file_name = 'Classification Error in Training on Predictions',
-        mode = 'prediction',
-        labels = ('Prediction Digits','Mislabeled Count')
-        )
+    # classification_test_error = ImageData(
+    #     category = 'test label error',
+    #     x = test.y,
+    #     y = reconstructed_test_labels,
+    #     binary_key = mislabeled_test
+    #     )
 
 
     graph_laplacian_error['train'][0] = np.sum(mislabeled_train)
@@ -816,10 +817,37 @@ def main(args:argparse.Namespace)->None:
     logger.info(f"test:{100*graph_laplacian_error['test'][1]}% across {test.y.size} samples")
 
 
+    # IPython.embed()
+
+    histogram_plot(
+        data = classification_train_error,
+        file_name = 'Training Classification Error on Features',
+        mode = 'feature',
+        labels = ('Feature Digits','Mislabeled Count')
+        )
 
 
+    histogram_plot(
+        data = classification_train_error,
+        file_name = 'Training Classification Error on Predictions',
+        mode = 'prediction',
+        labels = ('Prediction Digits','Mislabeled Count')
+        )
+
+    histogram_plot(
+        data = classification_test_error,
+        file_name = 'Test Classification Error on Features',
+        mode = 'feature',
+        labels = ('Feature Digits','Mislabeled Count')
+        )
 
 
+    histogram_plot(
+        data = classification_test_error,
+        file_name = 'Test Classification Error on Predictions',
+        mode = 'prediction',
+        labels = ('Prediction Digits','Mislabeled Count')
+        )
 
     ### Exclude similar digits
     indx = (train.y!=3)&(train.y!=8)&(train.y!=9)
