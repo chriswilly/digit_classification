@@ -36,6 +36,17 @@ import IPython
 np.set_printoptions(precision=2, threshold=27)
 
 
+## Container class
+
+@dataclass
+class ImageData:
+    category: str
+    x: np.ndarray
+    y: np.ndarray = None
+    binary_key: np.ndarray = None
+
+
+## Utils
 
 def start_log(
     name:str,
@@ -76,14 +87,6 @@ def start_log(
     return logger, log_file
 
 
-@dataclass
-class ImageData:
-    category: str
-    x: np.ndarray
-    y: np.ndarray = None
-    binary_key: np.ndarray = None
-
-
 def mpl_params()->None:
     """ matplotlib parameters plot formatting
     """
@@ -107,6 +110,8 @@ def mpl_params()->None:
     cycles = (cyc_alpha * cyc_lines * cyc_color)
     mpl.rcParams['axes.prop_cycle'] = cycles
 
+
+## Plots
 
 def plot_line(
     data:np.ndarray,  # 1D in singular vals
@@ -387,7 +392,82 @@ def eigvec_plot(
         plt.close('all')
 
 
-def find_PCA_count(
+
+def histogram_plot(
+    data:ImageData,
+    file_name:str,
+    mode:str,
+    labels:tuple = ('',''),
+    ext:str='.png',
+    PAPER_SIZE:tuple=(11,6)
+    )->None:
+    """
+    """
+    output = (
+        pathlib.Path('../plots')
+        .joinpath(file_name)
+        )
+
+    output.resolve().mkdir(parents=True, exist_ok=True)
+
+    digits = np.unique(data.x)
+
+    for number in digits:
+
+        indx = (data.x == number)&(data.binary_key==True)
+        indy = (data.y == number)&(data.binary_key==True)
+
+        # todo find a better enum or switch vs this str key
+
+        if mode == 'feature':
+            frequency_data = data.x[indx]
+
+        elif mode == 'prediction':
+            frequency_data = data.y[indy]
+
+        else:
+            raise Exception(f'{mode} key is not in enum "feature" or "prediction"')
+
+
+        fig = plt.figure(figsize=PAPER_SIZE)
+        ax = fig.add_subplot(111)
+
+        count,bins = np.histogram(frequency_data, bins = digits.size)
+        bins = bins[1:]
+        # func = func/func.sum() # pdf
+
+        ax.bar(
+            bins,count,
+            width=0.4,
+            label= list(map(str,digits)),
+            alpha=0.33
+            )
+
+        plt.title(f'{file_name}')
+
+        plt.xlabel(labels[0])
+        plt.ylabel(labels[1])
+
+        ax.legend(loc=0)
+
+        ax.xaxis.set_major_formatter(mpl.ticker.StrMethodFormatter('{x:,.1f}'))
+        ax.yaxis.set_major_formatter(mpl.ticker.StrMethodFormatter('{x:,.1f}'))
+        ax.xaxis.set_major_locator(mpl.ticker.MultipleLocator(base=(limits[1]-limits[0])/4))
+        ax.yaxis.set_major_locator(mpl.ticker.MultipleLocator(base=(limits[3]-limits[2])/4))
+
+        output = (
+            pathlib.Path('../plots')
+            .joinpath(f'{file_name}/{file_name}_{number}')
+            .with_suffix(ext)
+            )
+
+        plt.grid(visible=True, which='major', axis='both')
+        fig.savefig(output, bbox_inches='tight')
+        plt.close('all')
+
+
+
+def find_pca_count(
     model:PCA,
     ratio:float
     )->int:
@@ -563,9 +643,9 @@ def main(args:argparse.Namespace)->None:
 
     # L2 / Frobenius norm of singular values
     pca_modes_threshold = {
-        60:find_PCA_count(model=pca,ratio=0.6),
-        80:find_PCA_count(model=pca,ratio=0.8),
-        90:find_PCA_count(model=pca,ratio=0.9)
+        60:find_pca_count(model=pca,ratio=0.6),
+        80:find_pca_count(model=pca,ratio=0.8),
+        90:find_pca_count(model=pca,ratio=0.9)
         }
 
     # print('pca_modes_threshold:\n',pca_modes_threshold)
@@ -585,24 +665,30 @@ def main(args:argparse.Namespace)->None:
 
     ## Spectral Clustering Graph Laplacian training model
     graph_laplacian = SpectralClustering(
-        n_clusters=10,
-        n_components=10,
-        affinity='rbf',
-        n_jobs=-1,
-        assign_labels='cluster_qr'
+        n_clusters = 10,
+        n_components = 10, ## TODO: tune for > number of classes and
+        affinity = 'rbf',
+        # gamma = 1.0,
+        n_jobs = -1,
+        assign_labels = 'cluster_qr'
         )
 
     graph_laplacian.fit(train.x)
+
     # reassign true labels
+    ## TODO: devise way to have distinct labels pointing to similar true label, e.g. {1:1,22:1,2:2,29:2, ...}
+
     for label in np.unique(train.y):
         indx = train.y==label
         graph_laplacian.labels_[indx] = label
 
     graph_laplacian_classifier = SpectralEmbedding(
-        n_components=graph_laplacian.n_components,
-        affinity=graph_laplacian.affinity,
-        n_jobs=-1,
+        n_components = graph_laplacian.n_components,
+        affinity = graph_laplacian.affinity,
+        # gamma = None, ## TODO: tune gamma for accuracy
+        n_jobs = -1,
         )
+
     graph_laplacian_classifier.fit(train.x)
 
 
@@ -683,17 +769,54 @@ def main(args:argparse.Namespace)->None:
         'test': [0,1]
         }
 
-    graph_laplacian_error['train'][0] = np.sum((reconstructed_train_labels!=train.y))
+    mislabeled_train = reconstructed_train_labels!=train.y
+
+    mislabeled_test = reconstructed_test_labels!=test.y
+
+    classification_train_error = ImageData(
+        category = 'train label error',
+        x = train.y,
+        y = reconstructed_train_labels,
+        binary_key = mislabeled_train
+        )
+
+    classification_error_test = ImageData(
+        category = 'test label error',
+        x = test.y,
+        y = reconstructed_test_labels,
+        binary_key = mislabeled_test
+        )
+
+    histogram_plot(
+        data = classification_train_error,
+        file_name = 'Classification Error in Training on Features',
+        mode = 'feature',
+        labels = ('Feature Digits','Mislabeled Count')
+        )
+
+
+    histogram_plot(
+        data = classification_train_error,
+        file_name = 'Classification Error in Training on Predictions',
+        mode = 'prediction',
+        labels = ('Prediction Digits','Mislabeled Count')
+        )
+
+
+    graph_laplacian_error['train'][0] = np.sum(mislabeled_train)
 
     graph_laplacian_error['train'][1] = graph_laplacian_error['train'][0] / train.y.size
 
-    graph_laplacian_error['test'][0] = np.sum((reconstructed_test_labels!=test.y))
+    graph_laplacian_error['test'][0] = np.sum(mislabeled_test)
 
     graph_laplacian_error['test'][1] = graph_laplacian_error['test'][0] / test.y.size
 
     logger.info(f"train:{100*graph_laplacian_error['train'][1]}% across {train.y.size} samples")
 
     logger.info(f"test:{100*graph_laplacian_error['test'][1]}% across {test.y.size} samples")
+
+
+
 
 
 
@@ -707,13 +830,13 @@ def main(args:argparse.Namespace)->None:
         'test': [0,1]
         }
 
-    graph_laplacian_error_exclusion['train'][0] = np.sum((reconstructed_train_labels[indx]!=train.y[indx]))
+    graph_laplacian_error_exclusion['train'][0] = np.sum(mislabeled_train[indx])
 
-    graph_laplacian_error_exclusion['train'][1] = graph_laplacian_error['train'][0] / train.y[indx].size
+    graph_laplacian_error_exclusion['train'][1] = graph_laplacian_error_exclusion['train'][0] / train.y[indx].size
 
-    graph_laplacian_error_exclusion['test'][0] = np.sum((reconstructed_test_labels[indy]!=test.y[indy]))
+    graph_laplacian_error_exclusion['test'][0] = np.sum(mislabeled_test[indy])
 
-    graph_laplacian_error_exclusion['test'][1] = graph_laplacian_error['test'][0] / test.y[indy].size
+    graph_laplacian_error_exclusion['test'][1] = graph_laplacian_error_exclusion['test'][0] / test.y[indy].size
 
     logger.info(f"train:{100*graph_laplacian_error_exclusion['train'][1]}% across {train.y[indx].size} samples")
 
