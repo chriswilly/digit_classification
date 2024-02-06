@@ -1,6 +1,6 @@
 """
 Michael Willy
-AMATH582 Homework 2 + 4 combined digit classifier
+AMATH58* Homework 2 + 4 combined digit classifier
 January 29, 2022 update February 2, 2024
 """
 import argparse
@@ -9,7 +9,7 @@ from datetime import datetime
 import pathlib
 import numpy as np
 
-from rich import print
+# from rich import print
 from sys import stdout
 from dataclasses import (
     dataclass,
@@ -480,7 +480,7 @@ def histogram_plot(
         fig.savefig(output, bbox_inches='tight')
         plt.close('all')
 
-
+## Evaluation tools
 
 def find_pca_count(
     model:PCA,
@@ -554,7 +554,7 @@ def run_binray_pca_classifier(
 
     logger.info(f'\nalpha value:{np.round(ridge_regression.alpha_,3)}')
 
-    logger.info(f'{a},{b} train Mean Square Error:{np.round(train_mean_square_error,4)}')
+    logger.info(f'{a},{b} train Mean Square Error:{np.round(100*train_mean_square_error,4)}%')
 
 
     indx = (test.y==a)|(test.y==b)
@@ -578,9 +578,10 @@ def run_binray_pca_classifier(
         true_data = test_subset.binary_key
         )
 
-    logger.info(f'{a},{b} test Mean Square Error:{np.round(test_mean_square_error,4)}')
+    logger.info(f'{a},{b} test Mean Square Error:{np.round(100*test_mean_square_error,4)}%')
 
 
+## Main notebook style caller
 
 
 def main(args:argparse.Namespace)->None:
@@ -660,8 +661,15 @@ def main(args:argparse.Namespace)->None:
     pca_modes_threshold = {
         60:find_pca_count(model=pca,ratio=0.6),
         80:find_pca_count(model=pca,ratio=0.8),
-        90:find_pca_count(model=pca,ratio=0.9)
+        90:find_pca_count(model=pca,ratio=0.9),
+        95:find_pca_count(model=pca,ratio=0.95),
+        98:find_pca_count(model=pca,ratio=0.98),
         }
+    # 60% of L2 norm with 3 PCA modes
+    # 80% of L2 norm with 7 PCA modes
+    # 90% of L2 norm with 14 PCA modes
+    # 95% of L2 norm with 23 PCA modes
+    # 98% of L2 norm with 38 PCA modes
 
     # print('pca_modes_threshold:\n',pca_modes_threshold)
     [logger.info(f'{key}% of L2 norm with {val} PCA modes') for key,val in pca_modes_threshold.items()]
@@ -680,7 +688,7 @@ def main(args:argparse.Namespace)->None:
 
     ## Spectral Clustering Graph Laplacian training model
     graph_laplacian = SpectralClustering(
-        n_clusters = 10,
+        n_clusters = 10, ## <--
         n_components = 10, ## TODO: tune for > number of classes and
         affinity = 'rbf',
         # gamma = 1.0,
@@ -689,6 +697,9 @@ def main(args:argparse.Namespace)->None:
         )
 
     graph_laplacian.fit(train.x)
+
+    logger.info(f'{np.unique(train.y)=}')
+    logger.info(f'{np.unique(graph_laplacian.labels_)=}')
 
     # reassign true labels
     ## TODO: devise way to have distinct labels pointing to similar true label, e.g. {1:1,22:1,2:2,29:2, ...}
@@ -708,8 +719,8 @@ def main(args:argparse.Namespace)->None:
     graph_laplacian_classifier.fit(train.x)
 
 
-    print(graph_laplacian.labels_[:100])
-    print(train.y[:100])
+    # print(graph_laplacian.labels_[:100])
+    # print(train.y[:100])
 
     # IPython.embed()
 
@@ -731,8 +742,6 @@ def main(args:argparse.Namespace)->None:
         file_name='Cumulative Explained Variance Ratio Truncated',
         labels = ('index','Cumulative Sum')
         )
-
-
 
     train.binary_key = np.zeros([train.y.shape[0],10],dtype=int)
 
@@ -796,13 +805,12 @@ def main(args:argparse.Namespace)->None:
         binary_key = mislabeled_train
         )
 
-    # classification_test_error = ImageData(
-    #     category = 'test label error',
-    #     x = test.y,
-    #     y = reconstructed_test_labels,
-    #     binary_key = mislabeled_test
-    #     )
-
+    classification_test_error = ImageData(
+        category = 'test label error',
+        x = test.y,
+        y = reconstructed_test_labels,
+        binary_key = mislabeled_test
+        )
 
     graph_laplacian_error['train'][0] = np.sum(mislabeled_train)
 
@@ -812,9 +820,9 @@ def main(args:argparse.Namespace)->None:
 
     graph_laplacian_error['test'][1] = graph_laplacian_error['test'][0] / test.y.size
 
-    logger.info(f"train:{100*graph_laplacian_error['train'][1]}% across {train.y.size} samples")
+    logger.info(f"train:{np.round(100*graph_laplacian_error['train'][1],4)}% across {train.y.size} samples")
 
-    logger.info(f"test:{100*graph_laplacian_error['test'][1]}% across {test.y.size} samples")
+    logger.info(f"test:{np.round(100*graph_laplacian_error['test'][1],4)}% across {test.y.size} samples")
 
 
     # IPython.embed()
@@ -825,7 +833,6 @@ def main(args:argparse.Namespace)->None:
         mode = 'feature',
         labels = ('Feature Digits','Mislabeled Count')
         )
-
 
     histogram_plot(
         data = classification_train_error,
@@ -866,9 +873,9 @@ def main(args:argparse.Namespace)->None:
 
     graph_laplacian_error_exclusion['test'][1] = graph_laplacian_error_exclusion['test'][0] / test.y[indy].size
 
-    logger.info(f"train:{100*graph_laplacian_error_exclusion['train'][1]}% across {train.y[indx].size} samples")
+    logger.info(f"train:{np.round(100*graph_laplacian_error_exclusion['train'][1],4)}% across {train.y[indx].size} samples")
 
-    logger.info(f"test:{100*graph_laplacian_error_exclusion['test'][1]}% across {test.y[indy].size} samples")
+    logger.info(f"test:{np.round(100*graph_laplacian_error_exclusion['test'][1],4)}% across {test.y[indy].size} samples")
 
 
 
