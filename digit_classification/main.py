@@ -831,21 +831,21 @@ def main(args:argparse.Namespace)->None:
         data = classification_train_error,
         file_name = 'Training Classification Error on Features',
         mode = 'feature',
-        labels = ('Feature Digits','Mislabeled Count')
+        labels = ('Prediction Digits','Mislabeled Count')
         )
 
     histogram_plot(
         data = classification_train_error,
         file_name = 'Training Classification Error on Predictions',
         mode = 'prediction',
-        labels = ('Prediction Digits','Mislabeled Count')
+        labels = ('Feature Digits','Mislabeled Count')
         )
 
     histogram_plot(
         data = classification_test_error,
         file_name = 'Test Classification Error on Features',
         mode = 'feature',
-        labels = ('Feature Digits','Mislabeled Count')
+        labels = ('Prediction Digits','Mislabeled Count')
         )
 
 
@@ -853,7 +853,7 @@ def main(args:argparse.Namespace)->None:
         data = classification_test_error,
         file_name = 'Test Classification Error on Predictions',
         mode = 'prediction',
-        labels = ('Prediction Digits','Mislabeled Count')
+        labels = ('Feature Digits','Mislabeled Count')
         )
 
     ### Exclude similar digits
