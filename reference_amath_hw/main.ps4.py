@@ -1,7 +1,7 @@
 """
 Michael Willy
-AMATH582 Homework 4
-March 3, 2022
+AMATH Homework
+March 2022
 """
 import logging
 import datetime
